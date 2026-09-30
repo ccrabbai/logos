@@ -1,0 +1,64 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go build output
+/bin/
+/build/
+/dist/
+
+# Go coverage / profiling
+coverage.out
+coverage.html
+*.prof
+
+# Go workspace
+go.work.sum
+
+# IDEs / editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Docker
+docker-compose.override.yml
+
+# Local observability data
+prometheus-data/
+jaeger-data/
+
+# Buf generated files
+# Only ignore these if your project generates them
+# and they are not intended to be committed.
+/gen/
+
+# Temporary files
+tmp/
+temp/
+
+# OS/editor backups
+*.bak
+*.tmp

@@ -1,0 +1,16 @@
+{
+    "CN": "Logos",
+    "key": {
+        "algo": "rsa",
+        "size": 2048
+    },
+    "names": [
+        {
+            "C": "NG",
+            "L": "LA",
+            "ST": "Lagos",
+            "O": "Logos Inc",
+            "OU": "CA Services"
+        }
+    ]
+}

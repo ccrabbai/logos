@@ -1,0 +1,249 @@
+package logv
+
+import (
+	"io"
+	"os"
+	"fmt"
+	"time"
+	"hash/crc32"
+	"path/filepath"
+	api "github.com/ccrabbai/logos/api/logs/v1"
+
+	"google.golang.org/protobuf/proto"
+	"github.com/ccrabbai/logos/internal/config"
+)
+
+// For records without producer ID
+const defaultProducerID = "unknown"
+
+// segment binds an individual store data file and an index lookup file together.
+// It orchestrates the flow of data between RAM coordinates and physical files.
+type segment struct {
+	store      *store   // Pointer to our append-only record payload engine.
+	index      *index   // Pointer to our memory-mapped O(1) index tracking file.
+	baseOffset uint64   // The absolute starting logical sequence number for this segment.
+	nextOffset uint64   // The logical sequence number assigned to the next incoming record.
+	config     config.Config   // Reference to size boundaries passed down by the top-level log coordinator.
+}
+
+// newSegment provisions a unified data and index coordinator over the file system.
+// It opens existing files or creates brand new ones based on the baseOffset anchor.
+func newSegment(dir string, baseOffset uint64, c config.Config) (*segment, error) {
+	s := &segment{
+		baseOffset: baseOffset,
+		config:     c,
+	}
+
+	// Step 1: Open the store.log data file.
+	// os.O_CREATE: create it if missing | os.O_APPEND: force writes to the end (ie  for writes: "always jump to the end" state.)
+	// os.O_RDWR: allow reading and writing payloads.
+	storeFile, err := os.OpenFile(
+		filepath.Join(dir, fmt.Sprintf("%d.log", baseOffset)),
+		os.O_CREATE|os.O_APPEND|os.O_RDWR,
+		0644,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 2: Initialize our store wrapper engine around the open file.
+	if s.store, err = newStore(storeFile); err != nil {
+		return nil, err
+	}
+
+	// Step 3: Open the lookup index file with matching file permissions.
+	//Memory mapping requires skipping O_APPEND because it maps the file as a random-access array in memory, 
+	// whereas O_APPEND forces all writes exclusively to the end of the file, causing system call conflicts.
+	indexFile, err := os.OpenFile(
+		filepath.Join(dir, fmt.Sprintf("%d.index", baseOffset)),
+		os.O_CREATE|os.O_RDWR,
+		0644,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 4: Initialize our memory-mapped index engine around the open file.
+	if s.index, err = newIndex(indexFile, s.config); err != nil {
+		return nil, err
+	}
+
+	// Step 5: State Extraction & Crash Recovery Alignment.
+	// We read the last entry from the index to see if there is historical data.
+	if off, _, err := s.index.Read(-1); err != nil {
+		// If the error is an End-Of-File (io.EOF), it means this file is brand new and empty.
+		if err == io.EOF {
+			s.nextOffset = baseOffset
+		} else {
+			return nil, err
+		}
+	} else {
+		// If an entry exists, align nextOffset forward to pick up right after it.
+		s.nextOffset = baseOffset + uint64(off) + 1
+	}
+	return s, nil
+}
+
+// Append marshals a record, saves it to the store file, and maps it in the index file.
+// It returns the assigned global logical offset of the newly inserted record.
+func (s *segment) Append(record *api.Record) (offset uint64, err error) {
+	// Secure the absolute global identifier assignment.
+	cur := s.nextOffset
+
+	// Step 1: Assign the global offset and createdAt timestamp.
+	record.Offset = cur
+	record.CreatedAt = time.Now().UnixMilli()
+
+	// Step 2: Assign a default producer ID when the caller does not provide one.
+	if record.ProducerId == "" {
+		record.ProducerId = defaultProducerID
+	}
+
+	// Step 3: Calculate the checksum from the record value.
+	record.Checksum = crc32.ChecksumIEEE(record.Value)
+
+	// Step 4: Freeze our Go struct into a portable binary stream using Protobuf.
+	// You will need to make sure the proto package is imported at the top of the file.
+	p, err := proto.Marshal(record)
+	if err != nil {
+		return 0, err
+	}
+
+	// check if the free store space can accomodate the incoming record.
+
+	// Step 5: Append the binary stream to the data log file.
+	// This returns total bytes written and the absolute physical starting byte position.
+	_, pos, err := s.store.Append(p)
+	if err != nil {
+		return 0, err
+	}
+
+	// Step 6: Perform Relative Translation math and update the lookup index map.
+	// Subtracting the base offset allows us to tightly pack the logical ID into 4 bytes.
+	// If index write fails, rollback
+	if err = s.index.Write(
+		uint32(record.Offset-s.baseOffset),
+		pos,
+		); err != nil {
+		return 0, err
+	}
+
+	// Step 7: Advance our internal runtime pointer to prepare for subsequent writes.
+	s.nextOffset++
+	
+	return cur, nil
+}
+
+// Read retrieves the structured record matching the given global logical offset.
+func (s *segment) Read(off uint64) (*api.Record, error) {
+	// The requested global offset cannot belong to this segment.
+	if off < s.baseOffset {
+		return nil, fmt.Errorf(
+			"offset %d is before segment base offset %d",
+			off,
+			s.baseOffset,
+		)
+	}
+
+	// Translate the global offset into the segment-local index offset.
+	_, pos, err := s.index.Read(int64(off - s.baseOffset))
+	if err != nil {
+		return nil, err
+	}
+
+	// Read the length-prefixed protobuf payload from the store.
+	p, err := s.store.Read(pos)
+	if err != nil {
+		return nil, err
+	}
+
+	// Deserialize the record.
+	record := &api.Record{}
+	if err := proto.Unmarshal(p, record); err != nil {
+		return nil, err
+	}
+
+	// Validate the record payload against its persisted checksum.
+	calculatedChecksum := crc32.ChecksumIEEE(record.Value)
+	if calculatedChecksum != record.Checksum {
+		return nil, fmt.Errorf(
+			"checksum mismatch for offset %d: expected %d, got %d",
+			record.Offset,
+			record.Checksum,
+			calculatedChecksum,
+		)
+	}
+	return record, nil
+}
+
+// IsFull returns true if either the store file has breached its maximum configured byte capacity boundary.
+// or the index + 12(next index entry) breaches the index configured capacity.
+func (s *segment) IsFull() bool {
+	return s.store.size >= s.config.Segment.MaxStoreBytes ||
+		s.index.size >= s.config.Segment.MaxIndexBytes ||
+		s.index.size + entWidth > s.config.Segment.MaxIndexBytes // A factor to ensure the available space is sufficient for the next write.
+		// This is in place in case of partially written index.
+}
+
+// Close gracefully flushes memory map states, commits trailing disk buffers,
+// strips pre-allocated padding blocks, and shuts down all underlying file descriptors.
+func (s *segment) Close() error {
+	// Step 1: Close out the index file first. This safely unmaps variables 
+	// from memory to clear the Windows OS user-mapped section lock before truncation.
+	if err := s.index.Close(); err != nil {
+		return err
+	}
+
+	// Step 2: Close out the store log file, flushing any leftover data out of RAM buffers.
+	if err := s.store.Close(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// Remove shuts down active file dependencies and completely erases both 
+// the physical .log and .index files from your hard drive storage.
+func (s *segment) Remove() error {
+	// Step 1: Break ties with active OS handles and clean up memory allocations.
+	if err := s.Close(); err != nil {
+		return err
+	}
+
+	// Step 2: Physically delete the append-only data file from the drive.
+	if err := os.Remove(s.store.Name()); err != nil {
+		return err
+	}
+
+	// Step 3: Physically delete the memory-mapped lookup map file from the drive.
+	if err := os.Remove(s.index.Name()); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// nearestMultiple calculates and returns the largest multiple of 'k' that is less than or equal to 'j'.
+//
+// In systems engineering, this is a highly optimized "floor-rounding" algorithm used to map a random
+// global message offset directly to the base offset name of the file chunk it belongs to.
+//
+// Example: If each segment file is configured to hold 1000 records (k = 1000), and a reader asks for 
+// message number 2450 (j = 2450), this function drops the remainder via integer division (2450 / 1000 = 2) 
+// and multiplies it back (2 * 1000 = 2000), instantly routing the request to the '2000.log' file.
+func nearestMultiple(j, k uint64) uint64 {
+	// Because 'j' is defined as an unsigned 64-bit integer (uint64), it is mathematically impossible 
+	// for 'j' to be less than zero. This initial 'if' branch will always evaluate to true.
+	//if j >= 0 {
+		// Go performs integer truncation by default during division, meaning any fractional decimal 
+		// remainders are cleanly discarded by the CPU instead of rounded up.
+	return (j / k) * k
+	//}
+
+	// Architectural Note: This trailing return block is a structural safeguard pattern. 
+	// If this function is ever refactored in future chapters to accept signed integers (int64) to support 
+	// negative relative coordinates, standard integer division would truncate towards zero (-5 / 10 = 0), 
+	// which breaks floor routing boundaries. This specific equation corrects that edge case.
+	// return ((j - k + 1) / k) * k
+}
+

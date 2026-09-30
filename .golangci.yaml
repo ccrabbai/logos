@@ -1,0 +1,149 @@
+version: "2"
+
+run:
+  concurrency: 4
+  issues-exit-code: 1
+  tests: true
+  timeout: 5m
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    gofumpt:
+      extra-rules: true
+    goimports:
+      local-prefixes: [github.com/ccrabbai/logos]
+
+linters:
+  enable:
+    - asasalint
+    - asciicheck
+    - bidichk
+    - bodyclose
+    - containedctx
+    - contextcheck
+    - copyloopvar
+    - dogsled
+    - dupl
+    - durationcheck
+    - errname
+    - errorlint
+    - exhaustive
+    - forbidigo
+    - forcetypeassert
+    - goconst
+    - gocritic
+    - gocyclo
+    - godot
+    - goprintffuncname
+    - gosec
+    - interfacebloat
+    - ireturn
+    - lll
+    - misspell
+    - nakedret
+    - nestif
+    - nilerr
+    - nilnil
+    - noctx
+    - nolintlint
+    - prealloc
+    - predeclared
+    - promlinter
+    - revive
+    - rowserrcheck
+    - sqlclosecheck
+    - usetesting
+    - testpackage
+    - thelper
+    - tparallel
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - wastedassign
+    - whitespace
+    - wrapcheck
+  
+  settings:
+    errcheck:
+      check-blank: true
+      check-type-assertions: true
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - experimental
+        - opinionated
+        - performance
+        - style
+    gocyclo:
+      min-complexity: 15
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+    ireturn:
+      allow:
+        - error
+    lll:
+      line-length: 160
+    misspell:
+      locale: US
+    nolintlint:
+      allow-unused: false
+      require-explanation: true
+      require-specific: true
+    prealloc:
+      simple: true
+      range-loops: true
+      for-loops: true
+    promlinter:
+      strict: true
+    revive:
+      rules:
+        - name: blank-imports
+          disabled: true
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+        - name: if-return
+        - name: increment-decrement
+        - name: var-naming
+        - name: var-declaration
+          disabled: true
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+        - name: unreachable-code
+        - name: redefines-builtin-id
+    staticcheck:
+      checks: ["all"]
+
+  # In v2, exclusions are nested directly under the linters block
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - bodyclose
+          - forcetypeassert
+          - goconst
+          - ireturn
+          - dupl
+      - path: internal/grpc/server.go
+        linters:
+          - wrapcheck
+    # Maps directly to old include presets in v2 formatting
+    presets:
+      - "std-error-handling"

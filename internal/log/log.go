@@ -1,0 +1,376 @@
+package log
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"os"
+	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/ccrabbai/logos/internal/config"
+	"github.com/ccrabbai/logos/internal/core"
+	"github.com/ccrabbai/logos/internal/observability"
+	"github.com/ccrabbai/logos/internal/segment"
+	"github.com/ccrabbai/logos/internal/util"
+
+	api "github.com/ccrabbai/logos/api/logs/v1"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+)
+
+// Log acts as the parent controller and coordinator for a collection of log segments.
+type Log struct {
+	mu            sync.RWMutex
+	Dir           string
+	Config        config.Config
+	segments      []*segment.Segment
+	activeSegment *segment.Segment
+	metrics       *observability.Metrics
+}
+
+// Create a span whenever we enter this package 
+var tracer = otel.Tracer("logos/internal/log")
+
+func NewLog(dir string, c config.Config, metrics *observability.Metrics) (*Log, error) {
+	slog.Info("Storage engine initializing ...")
+
+	if c.Segment.MaxStoreBytes == 0 {
+		c.Segment.MaxStoreBytes = 1024
+	}
+	if c.Segment.MaxIndexBytes == 0 {
+		c.Segment.MaxIndexBytes = 36
+	}
+
+	l := &Log{
+		Dir:    dir,
+		Config: c,
+		metrics: metrics,
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		slog.Error("Failed to read storage directory during bootstrap", "dir", dir, "error", err)
+		return nil, err
+	}
+
+	var baseOffsets []uint64
+	for _, file := range files {
+		// if file.IsDir() || !strings.HasSuffix(file.Name(), ".index") {
+		if file.IsDir() || !strings.HasSuffix(file.Name(), ".log") {
+			continue
+		}
+		
+		// baseStr := strings.TrimSuffix(file.Name(), ".index")
+		baseStr := strings.TrimSuffix(file.Name(), ".log")
+		baseOffset, err := strconv.ParseUint(baseStr, 10, 64)
+		if err != nil {
+			slog.Error("Corrupted index file name encountered", "filename", file.Name(), "error", err)
+			return nil, err
+		}
+		baseOffsets = append(baseOffsets, baseOffset)
+	}
+
+	slices.Sort(baseOffsets)
+
+	for _, baseOffset := range baseOffsets {
+		if err = l.newSegment(baseOffset); err != nil {
+			return nil, err
+		}
+	}
+
+	if l.segments == nil {
+		if err = l.newSegment(c.Segment.InitialBaseOffset); err != nil {
+			return nil, err
+		}
+	}
+
+	slog.Info("Storage engine initialized successfully",
+		"directory", dir,
+		"segments_scanned", len(baseOffsets),
+		"active_segment_base", l.activeSegment.BaseOffset,
+		"next_write_offset", l.activeSegment.NextOffset,
+	)
+
+	return l, nil
+}
+
+func (l *Log) newSegment(baseOffset uint64) error {
+	s, err := segment.NewSegment(l.Dir, baseOffset, l.Config)
+	if err != nil {
+		slog.Error("failed to create new log segment",
+			"base_offset", baseOffset,
+			"error", err,
+		)
+		return err
+	}
+	l.segments = append(l.segments, s)
+	l.activeSegment = s
+	return nil
+}
+
+func (l *Log) Append(
+	ctx context.Context,
+	record *api.Record,
+) (off uint64, err error) {
+	start := time.Now()
+
+	ctx, span := tracer.Start(ctx, "Log.Append")
+	defer span.End()
+
+	defer func() {
+		durationMs := float64(time.Since(start).Microseconds()) / 1000
+
+		l.metrics.AppendDuration.Record(ctx, durationMs)
+
+		if err != nil {
+			l.metrics.AppendErrorsTotal.Add(ctx, 1)
+			return
+		}
+
+		l.metrics.AppendTotal.Add(ctx, 1)
+	}()
+
+	span.SetAttributes(
+		attribute.Int("log.record.size", len(record.Value)),
+	)
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.activeSegment.IsFull() {
+		if err := l.roll(); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "failed to roll segment")
+			return 0, err
+		}
+	}
+
+	off, err = l.activeSegment.Append(record)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to append record")
+
+		slog.Error(
+			"Failed to write record to active segment",
+			"target_offset", l.activeSegment.NextOffset,
+			"error", err,
+		)
+
+		return 0, err
+	}
+
+	slog.Info(
+		"Record appended successfully",
+		"global_offset", off,
+		"base_offset", l.activeSegment.BaseOffset,
+		"bytes_written", l.activeSegment.Store.Size-off,
+	)
+
+	span.SetAttributes(
+		attribute.Int64("log.offset", int64(off)),
+	)
+
+	return off, nil
+}
+
+func (l *Log) Read(
+	ctx context.Context,
+	off uint64,
+) (record *api.Record, err error) {
+	start := time.Now()
+
+	ctx, span := tracer.Start(ctx, "Log.Read")
+	defer span.End()
+
+	defer func() {
+		durationMs := float64(time.Since(start).Microseconds()) / 1000
+
+		l.metrics.ReadDuration.Record(ctx, durationMs)
+
+		if err != nil {
+			l.metrics.ReadErrorsTotal.Add(ctx, 1)
+			return
+		}
+
+		l.metrics.ReadTotal.Add(ctx, 1)
+	}()
+
+	span.SetAttributes(
+		attribute.Int64("log.offset", int64(off)),
+	)
+
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	low := 0
+	high := len(l.segments) - 1
+	var targetSegment *segment.Segment
+
+	for low <= high {
+		mid := (low + high) / 2
+
+		if l.segments[mid].BaseOffset <= off {
+			targetSegment = l.segments[mid]
+			low = mid + 1
+		} else {
+			high = mid - 1
+		}
+	}
+
+	if targetSegment == nil ||
+		off < targetSegment.BaseOffset ||
+		targetSegment.NextOffset <= off {
+
+		slog.Warn(
+			"read offset out of range",
+			"offset", off,
+		)
+
+		err = util.ErrOffsetOutOfRange{Offset: off}
+
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to read record")
+
+		return nil, err
+	}
+
+	record, err = targetSegment.Read(off)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "failed to read record")
+		return nil, err
+	}
+
+	return record, nil
+}
+
+func (l *Log) Close() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	slog.Info("closing log","segments", len(l.segments),)
+	for _, s := range l.segments {
+		if err := s.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (l *Log) Remove() error {
+	if err := l.Close(); err != nil {
+		return err
+	}
+	return os.RemoveAll(l.Dir)
+}
+
+func (l *Log) Reset() error {
+	if err := l.Remove(); err != nil {
+		return err
+	}
+	return os.MkdirAll(l.Dir, 0755)
+}
+
+func (l *Log) Truncate(lowest uint64) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	var survivingSegments []*segment.Segment
+	for _, s := range l.segments {
+		if s.NextOffset <= lowest+1 {
+			slog.Info("Purging historical log segment during compaction",
+				"segment_base", s.BaseOffset,
+				"max_offset_contained", s.NextOffset-1,
+				"lowest_threshold", lowest,
+			)
+			if err := s.Remove(); err != nil {
+				slog.Error("Failed to delete historical segment files", "base", s.BaseOffset, "error", err)
+				return err
+			}
+			continue
+		}
+		survivingSegments = append(survivingSegments, s)
+	}
+	l.segments = survivingSegments
+	return nil
+}
+
+func (l *Log) roll() error {
+	if err := l.activeSegment.Flush(true); err != nil {
+		return err
+	}
+
+	previousBaseOffset := l.activeSegment.BaseOffset
+	previousStoreSize := l.activeSegment.Store.Size
+	currentNextOffset := l.activeSegment.NextOffset
+
+	if err := l.newSegment(currentNextOffset); err != nil {
+		return err
+	}
+
+	slog.Info("Active segment capacity breached, triggering multi-file rollover",
+		"old_segment_base", previousBaseOffset,
+		"new_segment_base", currentNextOffset,
+		"store_bytes_used", previousStoreSize,
+	)
+	
+	return nil
+}
+
+func (l *Log) Flush(setBufferToNil bool) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.activeSegment != nil {
+		return l.activeSegment.Flush(setBufferToNil)
+	}
+	return nil
+}
+
+func (l *Log) LowestOffset() (uint64, error) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if len(l.segments) == 0 {
+		return 0, nil
+	}
+	return l.segments[0].BaseOffset, nil
+}
+
+func (l *Log) HighestOffset() (uint64, error) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if len(l.segments) == 0 {
+		return 0, nil
+	}
+	off := l.segments[len(l.segments)-1].NextOffset
+	if off == 0 {
+		return 0, nil
+	}
+	return off - 1, nil
+}
+
+func (l *Log) Reader() io.Reader {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	readers := make([]io.Reader, len(l.segments))
+	for i, s := range l.segments {
+		readers[i] = &originReader{store: s.Store, off: 0}
+	}
+	return io.MultiReader(readers...)
+}
+
+type originReader struct {
+	store *core.Store
+	off   int64
+}
+
+func (o *originReader) Read(p []byte) (int, error) {
+	n, err := o.store.ReadAt(p, o.off)
+	o.off += int64(n)
+	return n, err
+}

@@ -1,0 +1,19 @@
+version: v2
+lint:
+  use:
+    - STANDARD
+    - SERVICE_SUFFIX
+breaking:
+  use:
+    - FILE
+    - WIRE_JSON
+    - PACKAGE
+
+modules:
+  - path: proto
+    # Add this to include everything inside your proto folder
+    # includes:
+    #   - proto
+
+deps:
+  - buf.build/protocolbuffers/wellknowntypes:v21.12
