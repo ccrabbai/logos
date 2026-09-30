@@ -1,0 +1,14 @@
+# Permissions for the Admin Role
+p, admin, logsv1.Log, produce
+p, admin, logsv1.Log, consume
+
+# Permissions for the Writer Role
+p, writer, logsv1.Log, produce
+
+# Permissions for the Reader Role
+p, reader, logsv1.Log, consume
+
+# Role Assignments (User, Role)
+g, root, admin
+g, client, reader
+g, client, writer
