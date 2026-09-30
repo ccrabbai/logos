@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+option go_package = "github.com/ccrabbai/logos/logsv1";
+package logsv1;
+
+import "logs/v1/record.proto";
+
+// Setup gRPC 
+
+service Log {
+    rpc Produce(ProduceRequest) returns (ProduceResponse);
+    rpc Consume(ConsumeRequest) returns (ConsumeResponse);
+    rpc ConsumeStream(ConsumeRequest) returns (stream ConsumeResponse);
+    rpc ProduceStream(stream ProduceRequest) returns (stream ProduceResponse);
+}
