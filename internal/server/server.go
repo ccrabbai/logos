@@ -93,6 +93,13 @@ func NewGRPCServer(config *Config, opts ...grpc.ServerOption) (*grpc.Server, err
 }
 
 func (gs *grpcServer) Produce(ctx context.Context, in *api.ProduceRequest) (*api.ProduceResponse, error) {
+	if in == nil || in.Record == nil {
+		return nil, status.Error(
+			codes.InvalidArgument,
+			"produce request and record must not be nil",
+		)
+	}
+
 	in.Record.ProducerId = subject(ctx)
 	offset, err := gs.CommitLog.Append(ctx, in.Record)
 	if err != nil{
@@ -102,6 +109,13 @@ func (gs *grpcServer) Produce(ctx context.Context, in *api.ProduceRequest) (*api
 }
 
 func (gs *grpcServer) Consume(ctx context.Context, in *api.ConsumeRequest) (*api.ConsumeResponse, error) {
+	if in == nil {
+		return nil, status.Error(
+			codes.InvalidArgument,
+			"consume request must not be nil",
+		)
+	}
+
 	resp, err := gs.CommitLog.Read(ctx, in.Offset)
 	if err != nil{
 		return nil, err // status.Error(codes.NotFound, err.Error())
@@ -123,7 +137,7 @@ func (gs *grpcServer) ConsumeStream(in *api.ConsumeRequest, stream grpc.ServerSt
 			default:
 				return err
 			}
-			if err := stream.Send(resp); err!= nil{
+			if err := stream.Send(resp); err != nil{
 				return err //status.Error(codes.Unknown, err.Error())
 			}
 			in.Offset++
@@ -150,22 +164,47 @@ func (gs *grpcServer) ProduceStream(stream grpc.BidiStreamingServer[api.ProduceR
 }
 
 func authenticate(ctx context.Context) (context.Context, error) {
-	peer, ok := peer.FromContext(ctx)
-	if !ok {
-		return ctx, status.New(
-			codes.Unknown,
-			"couldn't find peer info",
-		).Err()
-	}
+    p, ok := peer.FromContext(ctx)
+    if !ok {
+        return nil, status.Error(
+            codes.Unauthenticated,
+            "missing peer information",
+        )
+    }
 
-	if peer.AuthInfo == nil {
-		return context.WithValue(ctx, subjectContextKey{}, ""), nil
-	}
-	
-	tlsInfo := peer.AuthInfo.(credentials.TLSInfo)
-	subject := tlsInfo.State.VerifiedChains[0][0].Subject.CommonName
-	ctx = context.WithValue(ctx, subjectContextKey{}, subject)
-	return ctx, nil
+    if p.AuthInfo == nil {
+        return nil, status.Error(
+            codes.Unauthenticated,
+            "missing authentication information",
+        )
+    }
+
+    tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo)
+    if !ok {
+        return nil, status.Error(
+            codes.Unauthenticated,
+            "peer did not authenticate using TLS",
+        )
+    }
+
+    if len(tlsInfo.State.VerifiedChains) == 0 ||
+        len(tlsInfo.State.VerifiedChains[0]) == 0 {
+        return nil, status.Error(
+            codes.Unauthenticated,
+            "peer certificate has no verified chain",
+        )
+    }
+
+    subject := tlsInfo.State.VerifiedChains[0][0].Subject.CommonName
+    if subject == "" {
+        return nil, status.Error(
+            codes.Unauthenticated,
+            "peer certificate has no subject common name",
+        )
+    }
+
+    ctx = context.WithValue(ctx, subjectContextKey{}, subject)
+    return ctx, nil
 }
 
 func subject(ctx context.Context) string {

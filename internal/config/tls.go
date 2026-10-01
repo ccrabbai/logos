@@ -29,6 +29,13 @@ type TLSConfig struct {
 func SetupTLSConfig(cfg TLSConfig) (*tls.Config, error) {
 	var err error
 	tlsConfig := &tls.Config{}
+
+	if (cfg.CertFile == "") != (cfg.KeyFile == "") {
+		return nil, fmt.Errorf(
+			"certificate and key must be provided together",
+		)
+	}
+
 	if cfg.CertFile != "" && cfg.KeyFile != "" {
 		tlsConfig.Certificates = make([]tls.Certificate, 1)
 		tlsConfig.Certificates[0], err = tls.LoadX509KeyPair(

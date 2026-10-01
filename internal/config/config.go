@@ -53,6 +53,11 @@ func LoadObservabilityConfig() (ObservabilityConfig, error) {
 		if err != nil {
 			return cfg, fmt.Errorf("invalid OTEL_TRACES_SAMPLER_ARG: %w", err)
 		}
+		if n < 0 || n > 1 {
+			return cfg, fmt.Errorf(
+				"OTEL_TRACES_SAMPLER_ARG must be between 0 and 1",
+			)
+		}
 		cfg.TraceSamplerArg = n
 	}
 	if v := os.Getenv("OTEL_EXPORTER_OTLP_INSECURE"); v != "" {

@@ -54,6 +54,11 @@ func InitTracing(
 	case "parentbased_always_off":
 		sampler = sdktrace.ParentBased(sdktrace.NeverSample())
 	case "traceidratio":
+		if cfg.TraceSamplerArg < 0 || cfg.TraceSamplerArg > 1 {
+			return nil, fmt.Errorf(
+				"trace sampler argument must be between 0 and 1",
+			)
+		}
 		sampler = sdktrace.TraceIDRatioBased(cfg.TraceSamplerArg)
 	case "parentbased_traceidratio":
 		sampler = sdktrace.ParentBased(
