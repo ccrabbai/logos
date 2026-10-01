@@ -1,0 +1,31 @@
+goos: windows
+goarch: amd64
+pkg: github.com/ccrabbai/logos/internal/core
+cpu: Intel(R) Core(TM) i3-10110U CPU @ 2.10GHz
+BenchmarkStoreAppend/buffer_0-4                  1704232              1779 ns/op         575.57 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_0-4                  2004819              2773 ns/op         369.24 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_0-4                  1518445              2792 ns/op         366.81 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_0-4                  1208593              2572 ns/op         398.20 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_0-4                  1519125              2471 ns/op         414.34 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_4096-4               1824614              2362 ns/op         433.47 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_4096-4               1000000              3024 ns/op         338.62 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_4096-4               1797684              2927 ns/op         349.88 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_4096-4               2037464              2201 ns/op         465.22 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_4096-4               1999112              2401 ns/op         426.57 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_16384-4              1845260              1743 ns/op         587.61 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_16384-4              3021264              2040 ns/op         501.91 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_16384-4              1000000              3467 ns/op         295.36 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_16384-4              2856582              3307 ns/op         309.61 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_16384-4              2582509              1511 ns/op         677.56 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_65536-4              3359521              1694 ns/op         604.60 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_65536-4              2260380              1557 ns/op         657.72 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_65536-4              2135644              1729 ns/op         592.29 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_65536-4              3278398              1587 ns/op         645.42 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_65536-4              2161735              1806 ns/op         566.98 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_262144-4             3165226              1312 ns/op         780.33 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_262144-4             1908663              1836 ns/op         557.70 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_262144-4             3045177              1989 ns/op         514.73 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_262144-4             3019776              1731 ns/op         591.52 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_262144-4             2433680              1787 ns/op         572.95 MB/s        1152 B/op          1 allocs/op
+PASS
+ok      github.com/ccrabbai/logos/internal/core 197.449s

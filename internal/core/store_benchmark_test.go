@@ -11,7 +11,6 @@ import (
 
 const (
 	benchmarkRecordBytes = 1024
-	benchmarkBufferBytes = 0
 )
 
 // BenchmarkStoreAppend measures Store.Append throughput for a fixed-size
@@ -20,7 +19,7 @@ func BenchmarkStoreAppend(b *testing.B) {
 	cfg := config.Config{}
 
 	bufferSizes := []uint64{
-		0,       // Existing bufio.Writer default
+		0, // Existing bufio.Writer default
 		4096,
 		16384,
 		65536,

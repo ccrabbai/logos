@@ -1,0 +1,22 @@
+go test ./internal/core -run '^$' -bench '^BenchmarkStoreAppend$' -benchmem -benchtime=3s -count=3
+goos: windows
+goarch: amd64
+pkg: github.com/ccrabbai/logos/internal/core
+cpu: Intel(R) Core(TM) i3-10110U CPU @ 2.10GHz
+BenchmarkStoreAppend/buffer_0-4                  1491994              2428 ns/op         421.68 MB/s        1152 B/op         1 allocs/op
+BenchmarkStoreAppend/buffer_0-4                  1728710              3322 ns/op         308.28 MB/s        1152 B/op         1 allocs/op
+BenchmarkStoreAppend/buffer_0-4                  1000000              3428 ns/op         298.70 MB/s        1152 B/op         1 allocs/op
+BenchmarkStoreAppend/buffer_4096-4               1244212              3329 ns/op         307.59 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_4096-4               1000000              3115 ns/op         328.77 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_4096-4               1738048              2467 ns/op         415.07 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_16384-4              2391360              2580 ns/op         396.89 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_16384-4              1000000              3258 ns/op         314.30 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_16384-4              1388421              2512 ns/op         407.71 MB/s        1152 B/op          1 allocs/op
+BenchmarkStoreAppend/buffer_65536-4               1782507              2114 ns/op         484.44 MB/s        1152 B/op         1 allocs/op
+BenchmarkStoreAppend/buffer_65536-4               1918975              1809 ns/op         565.94 MB/s        1152 B/op         1 allocs/op
+BenchmarkStoreAppend/buffer_65536-4               2299576              1882 ns/op         544.03 MB/s        1152 B/op         1 allocs/op
+BenchmarkStoreAppend/buffer_262144-4             2375934              1866 ns/op         548.65 MB/s        1152 B/op         1 allocs/op
+BenchmarkStoreAppend/buffer_262144-4             2074117              2633 ns/op         388.97 MB/s        1152 B/op         1 allocs/op
+BenchmarkStoreAppend/buffer_262144-4             1887378              1900 ns/op         539.05 MB/s        1152 B/op         1 allocs/op
+PASS
+ok      github.com/ccrabbai/logos/internal/core 107.445s
