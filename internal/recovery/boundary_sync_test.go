@@ -22,6 +22,7 @@ func newRecoveryFixture(t *testing.T) recoveryFixture {
 	cfg := config.Config{}
 	cfg.Segment.MaxStoreBytes = 1024 * 1024
 	cfg.Segment.MaxIndexBytes = 1024
+	cfg.Store.BufferBytes = 0
 
 	dir := t.TempDir()
 
@@ -37,7 +38,7 @@ func newRecoveryFixture(t *testing.T) recoveryFixture {
 		t.Fatalf("open store: %v", err)
 	}
 
-	store, err := core.NewStore(storeFile)
+	store, err := core.NewStore(storeFile, cfg)
 	if err != nil {
 		storeFile.Close()
 		t.Fatalf("create store: %v", err)

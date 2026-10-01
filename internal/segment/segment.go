@@ -40,7 +40,7 @@ func NewSegment(dir string, baseOffset uint64, c config.Config) (*Segment, error
 	if err != nil {
 		return nil, err
 	}
-	if s.Store, err = core.NewStore(storeFile); err != nil {
+	if s.Store, err = core.NewStore(storeFile, c); err != nil {
 		return nil, err
 	}
 

@@ -1,19 +1,25 @@
 package core_test
 
 import (
+	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
 	"sync"
 	"testing"
 
+	"github.com/ccrabbai/logos/internal/config"
 	"github.com/ccrabbai/logos/internal/core"
 	"github.com/ccrabbai/logos/internal/util"
 )
 
-func newTestStore(t *testing.T) (*core.Store, string) {
+func newTestStore(t *testing.T, buffer uint64) (*core.Store, string) {
 	t.Helper()
+
+	cfg := config.Config{}
+	cfg.Store.BufferBytes = buffer
 
 	dir := t.TempDir()
 	path := dir + "/store.log"
@@ -27,7 +33,7 @@ func newTestStore(t *testing.T) (*core.Store, string) {
 		t.Fatalf("open store file: %v", err)
 	}
 
-	store, err := core.NewStore(f)
+	store, err := core.NewStore(f, cfg)
 	if err != nil {
 		f.Close()
 		t.Fatalf("create store: %v", err)
@@ -40,8 +46,47 @@ func newTestStore(t *testing.T) (*core.Store, string) {
 	return store, path
 }
 
+
+var errWriteFailed = errors.New("write failed")
+
+type failWriter struct{}
+
+func (failWriter) Write(p []byte) (int, error) {
+	return 0, errWriteFailed
+}
+
+func TestStoreAppendWriteFailure(t *testing.T) {
+	s := &core.Store{
+		Buf:  bufio.NewWriterSize(failWriter{}, 16),
+		Size: 0,
+	}
+
+	// 8-byte length header + 32-byte record = 40 bytes,
+	// which is larger than the 16-byte buffer and forces
+	// bufio.Writer to call the underlying writer.
+	record := make([]byte, 32)
+
+	n, pos, err := s.Append(record)
+
+	if !errors.Is(err, errWriteFailed) {
+		t.Fatalf("expected %v, got %v", errWriteFailed, err)
+	}
+
+	if n != 0 {
+		t.Errorf("expected n=0, got %d", n)
+	}
+
+	if pos != 0 {
+		t.Errorf("expected pos=0, got %d", pos)
+	}
+
+	if s.Size != 0 {
+		t.Errorf("expected Size=0, got %d", s.Size)
+	}
+}
+
 func TestStoreAppendAndRead(t *testing.T) {
-	store, _ := newTestStore(t)
+	store, _ := newTestStore(t,0)
 
 	payload := []byte("hello logos")
 
@@ -75,7 +120,7 @@ func TestStoreAppendAndRead(t *testing.T) {
 }
 
 func TestStoreAppendReturnsSequentialPositions(t *testing.T) {
-	store, _ := newTestStore(t)
+	store, _ := newTestStore(t,0)
 
 	payloads := [][]byte{
 		[]byte("first"),
@@ -117,7 +162,7 @@ func TestStoreAppendReturnsSequentialPositions(t *testing.T) {
 }
 
 func TestStoreReadMultipleRecords(t *testing.T) {
-	store, _ := newTestStore(t)
+	store, _ := newTestStore(t,0)
 
 	payloads := [][]byte{
 		[]byte("one"),
@@ -155,7 +200,7 @@ func TestStoreReadMultipleRecords(t *testing.T) {
 }
 
 func TestStoreHandlesEmptyAndBinaryPayloads(t *testing.T) {
-	store, _ := newTestStore(t)
+	store, _ := newTestStore(t,0)
 
 	payloads := [][]byte{
 		{},
@@ -180,7 +225,7 @@ func TestStoreHandlesEmptyAndBinaryPayloads(t *testing.T) {
 }
 
 func TestStoreReadFlushesBufferedWrites(t *testing.T) {
-	store, _ := newTestStore(t)
+	store, _ := newTestStore(t,0)
 
 	payload := []byte("buffered write")
 
@@ -202,7 +247,10 @@ func TestStoreReadFlushesBufferedWrites(t *testing.T) {
 }
 
 func TestStorePersistsAcrossReopen(t *testing.T) {
-	store, path := newTestStore(t)
+	store, path := newTestStore(t,0)
+
+	cfg := config.Config{}
+	cfg.Store.BufferBytes = 0
 
 	payloads := [][]byte{
 		[]byte("persistent-one"),
@@ -229,7 +277,7 @@ func TestStorePersistsAcrossReopen(t *testing.T) {
 		t.Fatalf("reopen file: %v", err)
 	}
 
-	reopened, err := core.NewStore(f)
+	reopened, err := core.NewStore(f, cfg)
 	if err != nil {
 		f.Close()
 		t.Fatalf("reopen store: %v", err)
@@ -270,7 +318,7 @@ func TestStorePersistsAcrossReopen(t *testing.T) {
 }
 
 func TestStoreReadInvalidPosition(t *testing.T) {
-	store, _ := newTestStore(t)
+	store, _ := newTestStore(t,0)
 
 	_, _, err := store.Append([]byte("valid"))
 	if err != nil {
@@ -284,7 +332,7 @@ func TestStoreReadInvalidPosition(t *testing.T) {
 }
 
 func TestStoreReadIncompleteFrame(t *testing.T) {
-	store, _ := newTestStore(t)
+	store, _ := newTestStore(t,0)
 
 	// Write an invalid/truncated frame directly to the file.
 	// The length prefix claims a payload larger than what exists.
@@ -304,7 +352,7 @@ func TestStoreReadIncompleteFrame(t *testing.T) {
 }
 
 func TestStoreConcurrentAppend(t *testing.T) {
-	store, _ := newTestStore(t)
+	store, _ := newTestStore(t,0)
 
 	const writers = 16
 	const recordsPerWriter = 50

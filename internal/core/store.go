@@ -2,31 +2,50 @@ package core
 
 import (
 	"bufio"
-	"sync"
+	"fmt"
 	"os"
+	"sync"
 
+	"github.com/ccrabbai/logos/internal/config"
 	"github.com/ccrabbai/logos/internal/util"
 )
 
 // Store represents our low-level append-only data persistence engine wrapper.
 type Store struct {
 	File *os.File      // Exposed file handle so recovery loops can run Stat checks.
-	Mu   sync.Mutex   // Protects file references from concurrent read/write data races.
-	Buf  *bufio.Writer// In-memory cache layer to batch filesystem write system calls.
+	Mu   sync.Mutex    // Protects file references from concurrent read/write data races.
+	Buf  *bufio.Writer // In-memory cache layer to batch filesystem write system calls.
 	Size uint64        // Publicly readable tracker counting valid physical bytes.
 }
 
 // NewStore initializes a brand new storage instance wrapping an active filesystem object.
-func NewStore(f *os.File) (*Store, error) {
+func NewStore(f *os.File, c config.Config) (*Store, error) {
 	fi, err := os.Stat(f.Name())
 	if err != nil {
 		return nil, err
 	}
-	
+
+	var writer *bufio.Writer
+	bufferBytes := c.Store.BufferBytes
+
+	if bufferBytes == 0 {
+		writer = bufio.NewWriter(f)
+	} else {
+		maxInt := uint64(^uint(0) >> 1)
+		if bufferBytes > maxInt {
+			return nil, fmt.Errorf(
+				"store buffer size %d exceeds maximum supported size",
+				bufferBytes,
+			)
+		}
+
+		writer = bufio.NewWriterSize(f, int(bufferBytes))
+	}
+
 	return &Store{
 		File: f,
 		Size: uint64(fi.Size()),
-		Buf:  bufio.NewWriter(f),
+		Buf:  writer,
 	}, nil
 }
 
@@ -47,9 +66,9 @@ func (s *Store) Append(record []byte) (n uint64, pos uint64, err error) {
 	if err != nil {
 		return 0, 0, err
 	}
-	
+
 	s.Size += uint64(w)
-	
+
 	return uint64(w), pos, nil
 }
 
@@ -73,7 +92,7 @@ func (s *Store) Read(pos uint64) ([]byte, error) {
 	if _, err := s.File.ReadAt(b, int64(pos+util.LenWidth)); err != nil {
 		return nil, err
 	}
-	
+
 	return b, nil
 }
 
@@ -81,13 +100,13 @@ func (s *Store) Read(pos uint64) ([]byte, error) {
 func (s *Store) ReadAt(p []byte, off int64) (int, error) {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()
-	
+
 	if s.Buf != nil {
 		if err := s.Buf.Flush(); err != nil {
 			return 0, err
 		}
 	}
-	
+
 	return s.File.ReadAt(p, off)
 }
 
@@ -109,7 +128,7 @@ func (s *Store) Flush(setBufferToNil bool) error {
 			return err
 		}
 		if setBufferToNil {
-			s.Buf = nil 
+			s.Buf = nil
 		}
 	}
 	return nil
